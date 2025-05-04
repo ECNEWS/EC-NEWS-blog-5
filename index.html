@@ -1,1 +1,258 @@
+import React, { useState, useEffect, useRef } from 'react';
+import axios from 'axios';
+import { initializeApp } from 'firebase/app';
+import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { ToastContainer, toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
+import './ShortVideos.css';
 
+// Initialize Firebase
+const firebaseConfig = {
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
+};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+
+const ShortVideos = () => {
+  const [user, setUser] = useState(null);
+  const [videoFile, setVideoFile] = useState(null);
+  const [backgroundImage, setBackgroundImage] = useState(null);
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [caption, setCaption] = useState('');
+  const [videos, setVideos] = useState([]);
+  const [videoSpeed, setVideoSpeed] = useState(1);
+  const videoRef = useRef(null);
+  const lastTap = useRef(0);
+  const [currentVideoIndex, setCurrentVideoIndex] = useState(0);
+
+  // Check user authentication and fetch videos
+  useEffect(() => {
+    onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+    fetchVideos();
+  }, []);
+
+  // Fetch videos from backend
+  const fetchVideos = async () => {
+    try {
+      const res = await axios.get('https://your-backend-url/api/videos');
+      setVideos(res.data);
+    } catch (err) {
+      console.error(err);
+      toast.error('Error fetching videos');
+    }
+  };
+
+  // Handle double-tap to like a video
+  const handleDoubleTap = async (videoId) => {
+    const now = Date.now();
+    const DOUBLE_TAP_DELAY = 300;
+    if (now - lastTap.current < DOUBLE_TAP_DELAY) {
+      try {
+        await axios.post(`https://your-backend-url/api/videos/${videoId}/like`, {
+          userId: user.uid,
+        });
+        toast.success('Video liked!');
+        fetchVideos();
+      } catch (err) {
+        console.error(err);
+        toast.error('Error liking video');
+      }
+    }
+    lastTap.current = now;
+  };
+
+  // Handle video upload
+  const handleUpload = async (e) => {
+    e.preventDefault();
+    if (!user) {
+      toast.error('Please log in to upload videos');
+      return;
+    }
+    const formData = new FormData();
+    formData.append('video', videoFile);
+    formData.append('backgroundImage', backgroundImage);
+    formData.append('title', title);
+    formData.append('description', description);
+    formData.append('caption', caption);
+    formData.append('userId', user.uid);
+    formData.append('speed', videoSpeed);
+
+    try {
+      const res = await axios.post('https://your-backend-url/api/videos/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setVideos([...videos, res.data]);
+      toast.success('Video uploaded successfully!');
+      setCurrentVideoIndex(videos.length); // Show the newly uploaded video
+    } catch (err) {
+      console.error(err);
+      toast.error('Error uploading video');
+    }
+  };
+
+  // Share video on social media
+  const shareVideo = (videoUrl) => {
+    const shareUrl = encodeURIComponent(videoUrl);
+    const shareText = encodeURIComponent('Check out this awesome video on ECShort!');
+    window.open(`https://x.com/share?url=${shareUrl}&text=${shareText}`);
+  };
+
+  // PWA install prompt handler
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  useEffect(() => {
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    });
+  }, []);
+
+  const handleInstall = () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then((choiceResult) => {
+        if (choiceResult.outcome === 'accepted') {
+          console.log('User accepted the install prompt');
+        }
+        setDeferredPrompt(null);
+      });
+    }
+  };
+
+  // Handle swipe to next/previous video
+  const handleSwipe = (direction) => {
+    if (direction === 'up' && currentVideoIndex < videos.length - 1) {
+      setCurrentVideoIndex(currentVideoIndex + 1);
+    } else if (direction === 'down' && currentVideoIndex > 0) {
+      setCurrentVideoIndex(currentVideoIndex - 1);
+    }
+  };
+
+  // Touch events for swipe
+  let touchStartY = 0;
+  const handleTouchStart = (e) => {
+    touchStartY = e.touches[0].clientY;
+  };
+
+  const handleTouchEnd = (e) => {
+    const touchEndY = e.changedTouches[0].clientY;
+    if (touchStartY - touchEndY > 50) {
+      handleSwipe('up');
+    } else if (touchEndY - touchStartY > 50) {
+      handleSwipe('down');
+    }
+  };
+
+  return (
+    <div className="short-videos-container">
+      <ToastContainer />
+      {deferredPrompt && (
+        <button onClick={handleInstall} className="install-button">
+          Install ECShort App
+        </button>
+      )}
+
+      {/* Video upload form */}
+      {user ? (
+        <form onSubmit={handleUpload} className="upload-form">
+          <input
+            type="text"
+            placeholder="Video Title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            required
+          />
+          <textarea
+            placeholder="Description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
+          <input
+            type="text"
+            placeholder="Caption (Text Overlay)"
+            value={caption}
+            onChange={(e) => setCaption(e.target.value)}
+          />
+          <input type="file" accept="video/*" onChange={(e) => setVideoFile(e.target.files[0])} required />
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => setBackgroundImage(e.target.files[0])}
+            placeholder="Upload Background Image"
+          />
+          <label>Video Speed:</label>
+          <select value={videoSpeed} onChange={(e) => setVideoSpeed(e.target.value)}>
+            <option value="0.5">0.5x</option>
+            <option value="1">1x</option>
+            <option value="1.5">1.5x</option>
+            <option value="2">2x</option>
+          </select>
+          <button type="button" onClick={() => toast.info('AI Editing: Auto-captions and trimming coming soon!')}>
+            Apply AI Editing
+          </button>
+          <button type="submit">Upload Video</button>
+        </form>
+      ) : (
+        <p>Please log in to upload videos</p>
+      )}
+
+      {/* Video player */}
+      {videos.length > 0 && (
+        <div
+          className="video-player"
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+        >
+          <video
+            ref={videoRef}
+            className="fullscreen-video"
+            controls
+            autoPlay
+            playbackRate={videos[currentVideoIndex].speed}
+            onTouchStart={() => handleDoubleTap(videos[currentVideoIndex]._id)}
+            style={{
+              backgroundImage: `url(${videos[currentVideoIndex].backgroundImage})`,
+              backgroundSize: 'cover',
+            }}
+          >
+            <source src={videos[currentVideoIndex].url} type="video/mp4" />
+          </video>
+          <div className="caption-overlay">{videos[currentVideoIndex].caption}</div>
+          <div className="interactions">
+            <button className="interaction-btn">
+              <span role="img" aria-label="like">👍</span> {videos[currentVideoIndex].likes.length}
+            </button>
+            <button className="interaction-btn">
+              <span role="img" aria-label="dislike">👎</span> Dislike
+            </button>
+            <button className="interaction-btn">
+              <span role="img" aria-label="comment">💬</span> {videos[currentVideoIndex].comments.length}
+            </button>
+            <button className="interaction-btn" onClick={() => shareVideo(videos[currentVideoIndex].url)}>
+              <span role="img" aria-label="share">↪️</span> Share
+            </button>
+          </div>
+          <div className="video-info">
+            <span className="channel-name">@{videos[currentVideoIndex].uploadedBy.displayName || 'User'}</span>
+            <span className="video-title">{videos[currentVideoIndex].title}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Navigation bar */}
+      <div className="nav-bar">
+        <button className="nav-btn">होम पेज</button>
+        <button className="nav-btn">शॉर्ट्स</button>
+        <button className="nav-btn">+</button>
+        <button className="nav-btn">सदस्यता ले</button>
+        <button className="nav-btn">आप</button>
+      </div>
+    </div>
+  );
+};
+
+export default ShortVideos;
